@@ -35,3 +35,8 @@ Outputs go to `reports/figures/` and `reports/week2_cv_log.csv`. Headless run:
 jupyter nbconvert --to notebook --execute --inplace notebooks/Team22_Week2_FeatureEngineering.ipynb
 ```
 All randomness uses `random_state=42`; `X_test` is used only in the final cell.
+
+Export the PDF with the browser-based route so the styled ablation tables render (needs `pip install "nbconvert[webpdf]"` once):
+```bash
+jupyter nbconvert --to webpdf notebooks/Team22_Week2_FeatureEngineering.ipynb
+```

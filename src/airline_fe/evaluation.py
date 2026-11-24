@@ -9,6 +9,8 @@ from functools import partial
 
 import numpy as np
 import pandas as pd
+import warnings
+from pandas.io.formats.style import Styler
 from sklearn.base import clone
 from sklearn.feature_selection import RFE, RFECV, SelectKBest, mutual_info_classif
 from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_validate
@@ -34,6 +36,18 @@ def run_cv(pipe, X, y, cv=CV, n_jobs=-1, return_estimator=False):
 # ---------------------------------------------------------------------------
 # §3.2 Ablation log
 # ---------------------------------------------------------------------------
+def _fmt_or_dash(fmt, v):
+    return "—" if v is None or (isinstance(v, float) and np.isnan(v)) else fmt.format(v)
+
+
+class _LogStyler(Styler):
+    """Styler with a readable text/plain fallback (used by LaTeX-based PDF export)."""
+    text_repr = ""
+
+    def __repr__(self):
+        return self.text_repr or super().__repr__()
+
+
 LOG_COLUMNS = [
     "step", "description", "n_features",
     "roc_auc_mean", "roc_auc_std", "pr_auc_mean", "pr_auc_std", "f1_mean", "f1_std",
@@ -43,13 +57,14 @@ LOG_COLUMNS = [
 ]
 
 
-def verdict(delta, paired_std):
-    """Improved / Worsened only when Δ exceeds the per-fold paired noise."""
+def verdict(delta, paired_std, min_effect=0.001):
+    """Improved / Worsened only when Δ exceeds max(paired_std, min_effect)."""
     if delta is None or np.isnan(delta):
         return "Baseline"
-    if delta > paired_std:
+    threshold = max(paired_std, min_effect)
+    if delta > threshold:
         return "Improved"
-    if delta < -paired_std:
+    if delta < -threshold:
         return "Worsened"
     return "Maintained"
 
@@ -69,7 +84,8 @@ class AblationLog:
 
     # -- core -------------------------------------------------------------
     def log_step(self, step, description, X, y, pipe=None, ref=None,
-                 expected_width=None, cv=CV, n_jobs=-1, return_estimator=False):
+                 expected_width=None, n_features=None, min_effect=0.001,
+                 cv=CV, n_jobs=-1, return_estimator=False):
         """Run CV for ``step`` and append its row.
 
         ``pipe`` defaults to ``build_pipeline(**STEP_KW[step])``. ``ref`` defaults to
@@ -80,8 +96,9 @@ class AblationLog:
             raise ValueError(f"step {step!r} already logged")
         if pipe is None:
             pipe = build_pipeline(**STEP_KW[step])
+        if n_features is None:
+            n_features = self._n_features(pipe, X, y)
 
-        n_features = self._n_features(pipe, X, y)
         if expected_width is None:
             expected_width = EXPECTED_WIDTH.get(step)
         if expected_width is not None:
@@ -109,7 +126,7 @@ class AblationLog:
         row["delta_base_roc_auc"] = d_base
         row["paired_delta_std"] = paired_std
         row["fit_time_s"] = float(np.mean(res["fit_time"]))
-        row["verdict"] = verdict(d_prev, paired_std)
+        row["verdict"] = verdict(d_prev, paired_std, min_effect=min_effect)
         self.rows.append(row)
         assert len(auc) == cv.get_n_splits()
         return res
@@ -125,20 +142,38 @@ class AblationLog:
     @staticmethod
     def _n_features(pipe, X, y):
         """Width of the matrix the model sees: preprocess (+ selector if not passthrough)."""
-        head = clone(pipe)[:-1]
+        est = clone(pipe)
+        if hasattr(est, "best_estimator_") or hasattr(est, "param_grid"):
+            est = est.fit(X, y).best_estimator_
+        head = est[:-1]
         return head.fit(X, y).transform(X.iloc[:5] if hasattr(X, "iloc") else X[:5]).shape[1]
 
     # -- output -----------------------------------------------------------
     def to_frame(self):
         return pd.DataFrame(self.rows, columns=LOG_COLUMNS)
 
-    def styled(self):
+    @staticmethod
+    def _formats():
+        """Display formats. Deltas and the paired std get 5 d.p. so that values of
+        order 1e-5 (and Δ vs the 0.001 floor) are not rounded to 0.0000 / 0.0010."""
         fmt = {c: "{:.4f}" for c in LOG_COLUMNS
                if c.endswith(("_mean", "_std", "_gap", "_auc"))}
-        fmt["fit_time_s"] = "{:.2f}"
+        fmt.update({"delta_prev_roc_auc": "{:+.5f}", "delta_base_roc_auc": "{:+.5f}",
+                    "paired_delta_std": "{:.5f}", "fit_time_s": "{:.2f}"})
+        return fmt
+
+    def styled(self):
+        """Styled log for HTML / webpdf. Its text/plain repr is the same formatted
+        table, so a LaTeX ``nbconvert --to pdf`` export prints the table, not
+        ``<pandas…Styler at 0x…>``."""
+        df = self.to_frame()
+        fmt = self._formats()
         colors = {"Improved": "color: green", "Worsened": "color: red",
                   "Maintained": "color: gray"}
-        return (self.to_frame().style.format(fmt, na_rep="—")
+        sty = _LogStyler(df)
+        sty.text_repr = df.to_string(index=False, na_rep="—", formatters={
+            c: partial(_fmt_or_dash, f) for c, f in fmt.items()})
+        return (sty.format(fmt, na_rep="—")
                 .map(lambda v: colors.get(v, ""), subset=["verdict"]))
 
     def to_csv(self, path):
@@ -234,7 +269,9 @@ def mi_subsampled(X, y, discrete_mask=None, n=20_000, random_state=RANDOM_STATE)
         idx = np.sort(np.concatenate(idx))
         X, y = X[idx], y[idx]
     mask = "auto" if discrete_mask is None else np.asarray(discrete_mask, dtype=bool)
-    return mutual_info_classif(X, y, discrete_features=mask, random_state=random_state)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Clustering metrics expects discrete")
+        return mutual_info_classif(X, y, discrete_features=mask, random_state=random_state)
 
 
 def one_std_refit(cv_results):
@@ -328,14 +365,15 @@ def jaccard(a, b):
     return len(a & b) / len(a | b) if a | b else 1.0
 
 
-def pick_winner(res_a, res_b, n_a, n_b):
-    """Decision rule §3.5: AUC (beyond paired std) → fewer features → CappedRFECV."""
+def pick_winner(res_a, res_b, n_a, n_b, min_effect=0.001):
+    """Decision rule §3.5: AUC (beyond max(paired std, min_effect)) → fewer features → CappedRFECV."""
     diff = np.asarray(res_a["test_roc_auc"]) - np.asarray(res_b["test_roc_auc"])
     delta, noise = float(diff.mean()), float(diff.std(ddof=1))
-    if abs(delta) > noise:
-        return ("A" if delta > 0 else "B"), f"ROC-AUC delta(A-B)={delta:+.4f} beyond paired std {noise:.4f}"
+    threshold = max(noise, min_effect)
+    if abs(delta) > threshold:
+        return ("A" if delta > 0 else "B"), f"ROC-AUC delta(A-B)={delta:+.4f} beyond threshold {threshold:.4f}"
     if n_a != n_b:
-        return ("A" if n_a < n_b else "B"), f"AUC tied (|delta|={abs(delta):.4f} <= {noise:.4f}); fewer features"
+        return ("A" if n_a < n_b else "B"), f"AUC tied (|delta|={abs(delta):.4f} <= {threshold:.4f}); fewer features"
     return "B", "AUC and feature count tied; default to CappedRFECV"
 
 

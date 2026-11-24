@@ -1,0 +1,9 @@
+step,description,n_features,roc_auc_mean,roc_auc_std,pr_auc_mean,pr_auc_std,f1_mean,f1_std,train_roc_auc_mean,train_val_gap,ref,delta_prev_roc_auc,delta_base_roc_auc,paired_delta_std,fit_time_s,verdict
+S0,"Baseline: raw 22 features (both delays), impute + RobustScaler, OHE/ordinal",22,0.925567,0.001673,0.929973,0.001581,0.851303,0.002820,0.925643,0.000076,,,,,0.801359,Baseline
+S1,"Combine delays into Net Delay Recovery, drop raw Arrival Delay",22,0.925495,0.001686,0.929908,0.001579,0.851284,0.002717,0.925570,0.000075,S0,-0.000071,-0.000071,0.000042,0.900024,Maintained
+S1b,S1 with impute_strategy='arrival_median' (side branch),22,0.925549,0.001677,0.929960,0.001584,0.851296,0.002902,0.925628,0.000079,S1,0.000054,-0.000018,0.000043,0.761034,Maintained
+S2,log1p on Flight Distance and Departure Delay,22,0.926496,0.001618,0.930523,0.001531,0.851611,0.003081,0.926566,0.000069,S1,0.001001,0.000930,0.000188,0.750067,Improved
+S3,Add all 14 Likert *_is_na flags (unfiltered),36,0.964771,0.000357,0.957642,0.000472,0.887587,0.001622,0.964845,0.000074,S2,0.038275,0.039205,0.001489,1.818410,Improved
+S4,VarianceThreshold(0.0099) on the flag branch (keeps 4 of 14),26,0.964631,0.000359,0.957159,0.000370,0.887639,0.001673,0.964700,0.000069,S3,-0.000140,0.039065,0.000031,1.207220,Maintained
+S5a,"SelectKBest(MI), one-std k over [8, 10, 12, 14, 16, 18, 20]",20,0.961957,0.000555,0.954983,0.000310,0.883817,0.001374,0.962077,0.000121,S4,-0.002674,0.036390,0.000391,36.950793,Worsened
+S5b,"CappedRFECV(LR, step=1, max_features=20)",20,0.964447,0.000381,0.956930,0.000318,0.886868,0.001995,0.964499,0.000052,S4,-0.000184,0.038880,0.000079,31.065630,Maintained

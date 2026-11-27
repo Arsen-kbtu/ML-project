@@ -1,0 +1,5 @@
+metric,accuracy,accuracy,accuracy,precision_1,precision_1,precision_1,recall_1,recall_1,recall_1,f1_1,f1_1,f1_1,precision_0,precision_0,precision_0,recall_0,recall_0,recall_0,f1_0,f1_0,f1_0,roc_auc,roc_auc,roc_auc,pr_auc,pr_auc,pr_auc
+,CV mean,CV std,test,CV mean,CV std,test,CV mean,CV std,test,CV mean,CV std,test,CV mean,CV std,test,CV mean,CV std,test,CV mean,CV std,test,CV mean,CV std,test,CV mean,CV std,test
+model,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Logistic Regression (baseline),0.901919,0.001707,0.904681,0.888877,0.002430,0.890099,0.884874,0.002802,0.890572,0.886868,0.001995,0.890336,0.911867,0.001968,0.915895,0.915013,0.002055,0.915521,0.913435,0.001503,0.915708,0.964447,0.000381,0.965683,0.956930,0.000318,0.958755
+XGBoost (early stopping),0.960290,0.000742,0.961618,0.967924,0.001897,0.969089,0.939746,0.000489,0.941698,0.953626,0.000820,0.955197,0.954724,0.000322,0.956160,0.976073,0.001467,0.976923,0.965280,0.000674,0.966430,0.994328,0.000168,0.994685,0.993330,0.000151,0.993758
